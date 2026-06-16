@@ -279,6 +279,45 @@
   }
   .preset-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(124,106,247,.08); }
 
+  /* パンくずナビ */
+  .breadcrumb {
+    display: none;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 2px;
+    padding: 8px 14px;
+    background: var(--surface2);
+    border-bottom: 1px solid var(--border);
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .breadcrumb.show { display: flex; }
+  .bc-item {
+    color: var(--muted);
+    cursor: pointer;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: all .12s;
+    white-space: nowrap;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .bc-item:hover { color: var(--accent); background: rgba(124,106,247,.1); }
+  .bc-item.current { color: var(--text); font-weight: 600; cursor: default; }
+  .bc-item.current:hover { background: transparent; color: var(--text); }
+  .bc-sep { color: var(--border); }
+  /* フォルダ行の「開く」ボタン */
+  .open-btn {
+    flex-shrink: 0; font-size: 11px; padding: 1px 7px;
+    background: rgba(124,106,247,.12); border: 1px solid rgba(124,106,247,.3);
+    border-radius: 4px; color: var(--accent); cursor: pointer;
+    opacity: 0; transition: opacity .15s;
+    white-space: nowrap;
+  }
+  .file-row:hover .open-btn { opacity: 1; }
+  .open-btn:hover { background: rgba(124,106,247,.25); }
+
   /* 選択ツールバー */
   .sel-bar {
     display: flex;
@@ -649,6 +688,7 @@
         </button>
       </div>
     </div>
+    <div class="breadcrumb" id="breadcrumb"></div>
     <div class="view-tabs">
       <button class="view-tab active" onclick="setView('stem')">ペアでまとめる</button>
       <button class="view-tab" onclick="setView('ext')">拡張子でグループ</button>
@@ -688,6 +728,7 @@ let currentView = 'stem';
 let selectedSet     = new Set(); // 選択中ファイルの oldName セット
 let manualOverrides = {};        // oldName -> 手動編集したリネーム名
 let lastClickIdx    = -1;        // シフト連続選択用・直前クリック行インデックス
+let navStack        = [];        // [{name, handle}] 階層移動スタック（ルート=index 0）
 let displayOrder    = [];        // 現在表示順の oldName 配列（renderPreview で更新）
 
 // 拡張子ごとの色マップ
@@ -717,7 +758,13 @@ dz.addEventListener('drop', async e => {
     if (item.kind === 'file') {
       try {
         const h = await item.getAsFileSystemHandle();
-        if (h.kind === 'directory') { dirHandle = h; await loadFiles(); return; }
+        if (h.kind === 'directory') {
+          dirHandle = h;
+          navStack = [{ name: h.name, handle: h }];
+          updateBreadcrumb();
+          await loadFiles();
+          return;
+        }
       } catch {}
     }
   }
@@ -730,6 +777,8 @@ async function selectFolder() {
   }
   try {
     dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    navStack = [{ name: dirHandle.name, handle: dirHandle }];
+    updateBreadcrumb();
     await loadFiles();
   } catch (e) {
     if (e.name !== 'AbortError') console.error(e);
@@ -823,6 +872,45 @@ async function reloadFiles() {
   selectedSet.clear();
   manualOverrides = {};
   await loadFiles();
+}
+
+// ===== 階層ナビゲーション =====
+async function enterFolder(oldName, subHandle) {
+  // サブフォルダに入る
+  dirHandle = subHandle;
+  navStack.push({ name: oldName, handle: subHandle });
+  selectedSet.clear();
+  manualOverrides = {};
+  updateBreadcrumb();
+  await loadFiles();
+}
+
+async function navigateTo(stackIdx) {
+  if (stackIdx >= navStack.length - 1) return; // 現在地なら何もしない
+  navStack = navStack.slice(0, stackIdx + 1);
+  dirHandle = navStack[stackIdx].handle;
+  selectedSet.clear();
+  manualOverrides = {};
+  updateBreadcrumb();
+  await loadFiles();
+}
+
+function updateBreadcrumb() {
+  const bc = document.getElementById('breadcrumb');
+  if (navStack.length <= 1) {
+    bc.className = 'breadcrumb';
+    bc.innerHTML = '';
+    return;
+  }
+  bc.className = 'breadcrumb show';
+  bc.innerHTML = navStack.map((item, i) => {
+    const isCurrent = i === navStack.length - 1;
+    const sep = i > 0 ? '<span class="bc-sep"> / </span>' : '';
+    if (isCurrent) {
+      return `${sep}<span class="bc-item current">📁 ${esc(item.name)}</span>`;
+    }
+    return `${sep}<span class="bc-item" onclick="navigateTo(${i})">📁 ${esc(item.name)}</span>`;
+  }).join('');
 }
 
 function setView(view) {
@@ -1074,7 +1162,9 @@ function fileRowHtml(p, num, seen, didx) {
     <span class="ext-badge" style="background:${badgeBg};color:${badgeFg}">${p.isDir ? '📁' : esc(extLabel)}</span>
     <span class="old-wrap">
       <span class="old" title="${esc(p.oldName)}">${esc(p.oldName)}</span>
-      <button class="copy-btn" onclick="event.stopPropagation();copyOldName('${escAttr(p.oldName)}',this)">コピー</button>
+      ${p.isDir
+        ? `<button class="open-btn" onclick="event.stopPropagation();enterFolder('${k}',currentPlan.find(x=>x.oldName==='${k}').handle)">開く →</button>`
+        : `<button class="copy-btn" onclick="event.stopPropagation();copyOldName('${escAttr(p.oldName)}',this)">コピー</button>`}
     </span>
     <span class="arrow">${isChanged ? '→' : '='}</span>
     ${newPart}

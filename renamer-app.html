@@ -238,6 +238,28 @@
   .file-row.changed .new { color: var(--green); font-weight: 600; }
   .file-row.conflict .new { color: var(--red); }
   .file-row.deselected { opacity: .35; }
+  .file-row .new-wrap { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; }
+  /* クリックして編集可能な名前フィールド */
+  .editable-name {
+    flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    cursor: text; border-radius: 4px; padding: 1px 4px;
+    transition: background .15s;
+  }
+  .editable-name:hover { background: rgba(255,255,255,.07); }
+  .editable-name.manual { color: #fff; font-style: italic; }
+  /* インライン入力フィールド */
+  .inline-input {
+    flex: 1; background: var(--surface2); border: 1px solid var(--accent);
+    border-radius: 5px; color: var(--text); font-size: 13px;
+    padding: 2px 7px; outline: none; min-width: 0;
+  }
+  /* 手動編集バッジ */
+  .manual-badge {
+    font-size: 10px; color: var(--accent); background: rgba(124,106,247,.15);
+    border: 1px solid rgba(124,106,247,.3); border-radius: 4px;
+    padding: 1px 5px; cursor: pointer; flex-shrink: 0; white-space: nowrap;
+  }
+  .manual-badge:hover { background: rgba(124,106,247,.3); }
 
   /* 選択ツールバー */
   .sel-bar {
@@ -608,6 +630,8 @@
       <button onclick="deselectAll()">全解除</button>
       <button onclick="selectChanged()">変更あり</button>
       <button onclick="invertSelection()">反転</button>
+      <span style="width:1px;background:var(--border);height:16px;flex-shrink:0"></span>
+      <button onclick="clearAllManual()" title="全ての手動編集をリセット">手動編集クリア</button>
       <span class="sel-count" id="sel-count"></span>
     </div>
 
@@ -631,7 +655,8 @@ let fileHandles = [];   // [{name, handle}]
 let currentPlan = [];   // [{handle, oldName, newName, stem, ext, seqIdx, paired}]
 let currentMode = 'seq';
 let currentView = 'stem';
-let selectedSet = new Set(); // 選択中ファイルの oldName セット
+let selectedSet     = new Set(); // 選択中ファイルの oldName セット
+let manualOverrides = {};        // oldName -> 手動編集したリネーム名
 
 // 拡張子ごとの色マップ
 const EXT_COLORS = {
@@ -759,6 +784,7 @@ function syncSort(value) {
 async function reloadFiles() {
   if (!dirHandle) return;
   selectedSet.clear();
+  manualOverrides = {};
   await loadFiles();
 }
 
@@ -867,7 +893,9 @@ function buildPlan() {
       plan.push({
         handle: f.handle,
         oldName: f.name,
-        newName: buildNewNameCore(f.stem, f.ext, idx, f.lastModified),
+        newName: manualOverrides[f.name] ?? buildNewNameCore(f.stem, f.ext, idx, f.lastModified),
+        isManual: f.name in manualOverrides,
+        _seqIdx: idx,
         stem: f.stem,
         ext: f.ext,
         lastModified: f.lastModified,
@@ -973,18 +1001,93 @@ function fileRowHtml(p, num, seen) {
   const isChanged  = p.oldName !== p.newName;
   const isConflict = isChanged && (seen[p.newName] || 0) > 1;
   const isSel      = selectedSet.has(p.oldName);
+  const isManual   = p.isManual;
   const color = extColor(p.ext);
   const extLabel = (p.ext || '?').replace('.','').toUpperCase().slice(0,5);
-  const oldNameEsc = esc(p.oldName);
+  const k = escAttr(p.oldName); // onclick属性用エスケープ
+
+  let newPart;
+  if (!isSel) {
+    newPart = `<span class="new-wrap"><span style="color:var(--muted);font-style:italic;flex:1">スキップ</span></span>`;
+  } else {
+    const newDisp = esc(p.newName);
+    const manualBadge = isManual
+      ? `<span class="manual-badge" title="手動編集をリセット" onclick="event.stopPropagation();clearManual('${k}')">手動 ✕</span>`
+      : '';
+    newPart = `<span class="new-wrap">
+      <span class="editable-name ${isManual ? 'manual' : ''} ${isConflict ? '' : (isChanged ? '' : '')}"
+        title="クリックして編集"
+        onclick="event.stopPropagation();startEdit(this,'${k}')">${newDisp}</span>
+      ${manualBadge}
+    </span>`;
+  }
+
   return `<div class="file-row ${isChanged ? 'changed' : ''} ${isConflict ? 'conflict' : ''} ${isSel ? 'selected' : 'deselected'}"
-    onclick="toggleFile('${oldNameEsc}')" style="cursor:pointer">
-    <input class="cb" type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();toggleFile('${oldNameEsc}')">
+    onclick="toggleFile('${k}')" style="cursor:pointer">
+    <input class="cb" type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();toggleFile('${k}')">
     <span class="num">${num}</span>
     <span class="ext-badge" style="background:${color}22;color:${color}">${esc(extLabel)}</span>
-    <span class="old" title="${oldNameEsc}">${oldNameEsc}</span>
+    <span class="old" title="${esc(p.oldName)}">${esc(p.oldName)}</span>
     <span class="arrow">${isChanged ? '→' : '='}</span>
-    <span class="new" title="${esc(p.newName)}">${isSel ? esc(p.newName) : '<span style="color:var(--muted);font-style:italic">スキップ</span>'}</span>
+    ${newPart}
   </div>`;
+}
+
+// onclick属性用：シングルクォートと特殊文字をエスケープ
+function escAttr(s) {
+  return String(s).replace(/\\/g,'\\\\').replace(/'/g,"\\'").replace(/"/g,'&quot;');
+}
+
+function startEdit(spanEl, oldName) {
+  const wrap = spanEl.closest('.new-wrap');
+  const currentVal = manualOverrides[oldName] ?? currentPlan.find(p => p.oldName === oldName)?.newName ?? '';
+  const input = document.createElement('input');
+  input.className = 'inline-input';
+  input.value = currentVal;
+  wrap.innerHTML = '';
+  wrap.appendChild(input);
+  input.focus();
+  input.select();
+
+  const commit = () => {
+    const val = input.value.trim();
+    if (val && val !== (currentPlan.find(p => p.oldName === oldName)?.newName ?? '')) {
+      // 元の自動生成名と違う場合は手動上書き
+      const autoName = buildNewNameCore(...getPlanArgs(oldName));
+      if (val !== autoName) {
+        manualOverrides[oldName] = val;
+      } else {
+        delete manualOverrides[oldName]; // 自動名と一致したら手動フラグ解除
+      }
+    } else if (!val) {
+      delete manualOverrides[oldName];
+    }
+    renderPreview();
+  };
+  input.addEventListener('blur', commit);
+  input.addEventListener('keydown', e => {
+    if (e.key === 'Enter') { e.preventDefault(); commit(); }
+    if (e.key === 'Escape') { renderPreview(); } // キャンセル
+  });
+}
+
+function getPlanArgs(oldName) {
+  // buildPlan で計算されたセミパラメータを再現するのは複雑なので
+  // currentPlan から stem/ext/seqIdx/lastModified を取り出して返す
+  const p = currentPlan.find(x => x.oldName === oldName);
+  if (!p) return ['', '', 0, 0];
+  // seqIdx の復元: 自動名を逆算するより buildPlan 内の index を保存する方が確実
+  return [p.stem, p.ext, p._seqIdx ?? 0, p.lastModified];
+}
+
+function clearManual(oldName) {
+  delete manualOverrides[oldName];
+  buildPreview();
+}
+
+function clearAllManual() {
+  manualOverrides = {};
+  buildPreview();
 }
 
 function toggleFile(oldName) {

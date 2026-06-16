@@ -226,7 +226,10 @@
     transition: background .1s;
   }
   .file-row:hover { background: var(--surface); }
-  .file-row .num { color: var(--muted); font-size: 11px; width: 28px; text-align: right; flex-shrink: 0; }
+  .file-row.selected { background: rgba(124,106,247,.1); }
+  .file-row.selected:hover { background: rgba(124,106,247,.15); }
+  .file-row .cb { flex-shrink: 0; width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
+  .file-row .num { color: var(--muted); font-size: 11px; width: 24px; text-align: right; flex-shrink: 0; }
   .file-row .old { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file-row .arrow { color: var(--border); flex-shrink: 0; }
   .file-row .new { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -234,6 +237,31 @@
   .file-row.changed .arrow { color: var(--accent); }
   .file-row.changed .new { color: var(--green); font-weight: 600; }
   .file-row.conflict .new { color: var(--red); }
+  .file-row.deselected { opacity: .35; }
+
+  /* 選択ツールバー */
+  .sel-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 7px 14px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    font-size: 12px;
+    flex-shrink: 0;
+  }
+  .sel-bar button {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--muted);
+    border-radius: 5px;
+    padding: 3px 10px;
+    font-size: 11px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .sel-bar button:hover { border-color: var(--accent); color: var(--accent); }
+  .sel-count { color: var(--accent); font-weight: 700; margin-left: auto; }
 
   .empty-state {
     flex: 1;
@@ -556,6 +584,14 @@
       <button class="view-tab" onclick="setView('flat')">フラット</button>
     </div>
 
+    <div class="sel-bar" id="sel-bar" style="display:none">
+      <button onclick="selectAll()">全選択</button>
+      <button onclick="deselectAll()">全解除</button>
+      <button onclick="selectChanged()">変更あり</button>
+      <button onclick="invertSelection()">反転</button>
+      <span class="sel-count" id="sel-count"></span>
+    </div>
+
     <div id="preview-content">
       <div class="empty-state">
         <div class="icon">📁</div>
@@ -576,6 +612,7 @@ let fileHandles = [];   // [{name, handle}]
 let currentPlan = [];   // [{handle, oldName, newName, stem, ext, seqIdx, paired}]
 let currentMode = 'seq';
 let currentView = 'stem';
+let selectedSet = new Set(); // 選択中ファイルの oldName セット
 
 // 拡張子ごとの色マップ
 const EXT_COLORS = {
@@ -804,6 +841,16 @@ function buildPlan() {
 function buildPreview() {
   if (!fileHandles.length) return;
   currentPlan = buildPlan();
+  // 新しくロードした場合は全選択、既に選択がある場合は維持
+  if (selectedSet.size === 0) {
+    selectedSet = new Set(currentPlan.map(p => p.oldName));
+  } else {
+    // 存在しなくなったファイルは除去
+    const names = new Set(currentPlan.map(p => p.oldName));
+    selectedSet = new Set([...selectedSet].filter(n => names.has(n)));
+    // 新しく追加されたファイルは自動選択
+    currentPlan.forEach(p => { if (!selectedSet.has(p.oldName)) selectedSet.add(p.oldName); });
+  }
   renderPreview();
 }
 
@@ -816,6 +863,7 @@ function renderPreview() {
 
   let changed = 0, conflicts = 0;
   currentPlan.forEach(p => {
+    if (!selectedSet.has(p.oldName)) return;
     if (p.oldName !== p.newName) changed++;
     if (p.oldName !== p.newName && seen[p.newName] > 1) conflicts++;
   });
@@ -824,6 +872,8 @@ function renderPreview() {
   document.getElementById('stat-changed').textContent = changed;
   document.getElementById('stat-conflict').textContent = conflicts;
   document.getElementById('btn-exec').disabled = changed === 0 || conflicts > 0;
+  document.getElementById('sel-bar').style.display = 'flex';
+  document.getElementById('sel-count').textContent = `選択中: ${selectedSet.size} / ${currentPlan.length} 件`;
 
   let html = '<div class="preview-list">';
 
@@ -878,15 +928,34 @@ function renderPreview() {
 function fileRowHtml(p, num, seen) {
   const isChanged  = p.oldName !== p.newName;
   const isConflict = isChanged && (seen[p.newName] || 0) > 1;
+  const isSel      = selectedSet.has(p.oldName);
   const color = extColor(p.ext);
   const extLabel = (p.ext || '?').replace('.','').toUpperCase().slice(0,5);
-  return `<div class="file-row ${isChanged ? 'changed' : ''} ${isConflict ? 'conflict' : ''}">
+  const oldNameEsc = esc(p.oldName);
+  return `<div class="file-row ${isChanged ? 'changed' : ''} ${isConflict ? 'conflict' : ''} ${isSel ? 'selected' : 'deselected'}"
+    onclick="toggleFile('${oldNameEsc}')" style="cursor:pointer">
+    <input class="cb" type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();toggleFile('${oldNameEsc}')">
     <span class="num">${num}</span>
     <span class="ext-badge" style="background:${color}22;color:${color}">${esc(extLabel)}</span>
-    <span class="old" title="${esc(p.oldName)}">${esc(p.oldName)}</span>
+    <span class="old" title="${oldNameEsc}">${oldNameEsc}</span>
     <span class="arrow">${isChanged ? '→' : '='}</span>
-    <span class="new" title="${esc(p.newName)}">${esc(p.newName)}</span>
+    <span class="new" title="${esc(p.newName)}">${isSel ? esc(p.newName) : '<span style="color:var(--muted);font-style:italic">スキップ</span>'}</span>
   </div>`;
+}
+
+function toggleFile(oldName) {
+  if (selectedSet.has(oldName)) selectedSet.delete(oldName);
+  else selectedSet.add(oldName);
+  renderPreview();
+}
+
+function selectAll()     { selectedSet = new Set(currentPlan.map(p => p.oldName)); renderPreview(); }
+function deselectAll()   { selectedSet.clear(); renderPreview(); }
+function selectChanged() { selectedSet = new Set(currentPlan.filter(p => p.oldName !== p.newName).map(p => p.oldName)); renderPreview(); }
+function invertSelection() {
+  const all = new Set(currentPlan.map(p => p.oldName));
+  selectedSet = new Set([...all].filter(n => !selectedSet.has(n)));
+  renderPreview();
 }
 
 function esc(s) {
@@ -895,10 +964,10 @@ function esc(s) {
 
 // ===== リネーム実行 =====
 async function executeRename() {
-  const toRename = currentPlan.filter(p => p.oldName !== p.newName);
+  const toRename = currentPlan.filter(p => p.oldName !== p.newName && selectedSet.has(p.oldName));
   if (!toRename.length) return;
 
-  const ok = confirm(`${toRename.length} 件のファイルをリネームします。よろしいですか？`);
+  const ok = confirm(`選択した ${toRename.length} 件のファイルをリネームします。よろしいですか？`);
   if (!ok) return;
 
   let done = 0, failed = 0;
@@ -921,6 +990,7 @@ async function executeRename() {
     ? `${done} 件完了、${failed} 件失敗しました`
     : `${done} 件のリネームが完了しました！`;
 
+  selectedSet.clear(); // 再ロード後に全選択させる
   await loadFiles();
 }
 

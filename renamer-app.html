@@ -586,8 +586,8 @@
             <button class="preset-btn" onclick="applyPreset('paren-all')">括弧すべて削除</button>
             <button class="preset-btn" onclick="applyPreset('space-under')">スペース→_</button>
             <button class="preset-btn" onclick="applyPreset('trim-spaces')">前後スペース除去</button>
-            <button class="preset-btn" onclick="applyPreset('to-lower')">小文字に変換</button>
-            <button class="preset-btn" onclick="applyPreset('to-upper')">大文字に変換</button>
+            <button class="preset-btn" onclick="applyPreset('num-to-half')">数字 全角→半角</button>
+            <button class="preset-btn" onclick="applyPreset('num-to-full')">数字 半角→全角</button>
           </div>
         </div>
         <div class="field">
@@ -729,7 +729,7 @@ let currentMode = 'seq';
 let currentView = 'stem';
 let selectedSet     = new Set(); // 選択中ファイルの oldName セット
 let manualOverrides = {};        // oldName -> 手動編集したリネーム名
-let caseConvert     = '';        // '' | 'lower' | 'upper'
+let caseConvert     = '';        // '' | 'num-half' | 'num-full'
 let lastClickIdx    = -1;        // シフト連続選択用・直前クリック行インデックス
 let navStack        = [];        // [{name, handle}] 階層移動スタック（ルート=index 0）
 let displayOrder    = [];        // 現在表示順の oldName 配列（renderPreview で更新）
@@ -1237,9 +1237,18 @@ function clearAllManual() {
 }
 
 // クイックプリセット
+// 全角数字 ↔ 半角数字 変換
+const FULL_NUMS = '０１２３４５６７８９';
+const HALF_NUMS = '0123456789';
 function applyCaseConvert(s) {
-  if (caseConvert === 'lower') return s.toLowerCase();
-  if (caseConvert === 'upper') return s.toUpperCase();
+  if (caseConvert === 'num-half') {
+    // 全角数字 → 半角数字
+    return s.replace(/[０-９]/g, c => HALF_NUMS[FULL_NUMS.indexOf(c)]);
+  }
+  if (caseConvert === 'num-full') {
+    // 半角数字 → 全角数字
+    return s.replace(/[0-9]/g, c => FULL_NUMS[HALF_NUMS.indexOf(c)]);
+  }
   return s;
 }
 
@@ -1255,17 +1264,16 @@ const PRESETS = {
 };
 function applyPreset(key) {
   // 大文字・小文字変換はケース変換フラグで処理
-  if (key === 'to-lower' || key === 'to-upper') {
-    const next = key === 'to-lower' ? 'lower' : 'upper';
-    caseConvert = (caseConvert === next) ? '' : next; // 同じボタン再クリックで解除
-    // ボタンの見た目を更新
+  if (key === 'num-to-half' || key === 'num-to-full') {
+    const next = key === 'num-to-half' ? 'num-half' : 'num-full';
+    caseConvert = (caseConvert === next) ? '' : next; // 再クリックで解除
     document.querySelectorAll('.preset-btn').forEach(btn => {
       const k = btn.getAttribute('onclick')?.match(/applyPreset\('([^']+)'\)/)?.[1];
-      if (k === 'to-lower' || k === 'to-upper') {
-        const active = (k === 'to-lower' && caseConvert === 'lower') || (k === 'to-upper' && caseConvert === 'upper');
-        btn.style.background    = active ? 'var(--accent)' : '';
-        btn.style.color         = active ? '#fff' : '';
-        btn.style.borderColor   = active ? 'var(--accent)' : '';
+      if (k === 'num-to-half' || k === 'num-to-full') {
+        const active = (k === 'num-to-half' && caseConvert === 'num-half') || (k === 'num-to-full' && caseConvert === 'num-full');
+        btn.style.background  = active ? 'var(--accent)' : '';
+        btn.style.color       = active ? '#fff' : '';
+        btn.style.borderColor = active ? 'var(--accent)' : '';
       }
     });
     buildPreview();

@@ -1205,27 +1205,50 @@ async function executeRename() {
   const ok = confirm(`選択した ${toRename.length} 件のファイルをリネームします。よろしいですか？`);
   if (!ok) return;
 
-  let done = 0, failed = 0;
-  for (const p of toRename) {
-    try {
-      await p.handle.move(dirHandle, p.newName);
-      done++;
-    } catch (e) {
-      console.error(e);
-      failed++;
-    }
-  }
-
   const bar  = document.getElementById('result-bar');
   const icon = document.getElementById('result-icon');
   const msg  = document.getElementById('result-msg');
+
+  bar.className = 'result-bar show';
+  icon.textContent = '⏳';
+  msg.textContent = `リネーム中... 0 / ${toRename.length}`;
+
+  let done = 0, failed = 0;
+  const errors = [];
+
+  for (const p of toRename) {
+    try {
+      // まず move() を試みる（Chrome 116+）
+      if (typeof p.handle.move === 'function') {
+        await p.handle.move(dirHandle, p.newName);
+      } else {
+        // フォールバック: 内容コピー → 新ファイル作成 → 旧ファイル削除
+        const file = await p.handle.getFile();
+        const buf  = await file.arrayBuffer();
+        const newHandle = await dirHandle.getFileHandle(p.newName, { create: true });
+        const writable  = await newHandle.createWritable();
+        await writable.write(buf);
+        await writable.close();
+        await dirHandle.removeEntry(p.oldName);
+      }
+      done++;
+    } catch (e) {
+      console.error(`rename failed: ${p.oldName} → ${p.newName}`, e);
+      errors.push(`${p.oldName}: ${e.message || e}`);
+      failed++;
+    }
+    msg.textContent = `リネーム中... ${done + failed} / ${toRename.length}`;
+  }
+
   bar.className = 'result-bar show ' + (failed ? 'error' : 'success');
   icon.textContent = failed ? '❌' : '✅';
-  msg.textContent = failed
-    ? `${done} 件完了、${failed} 件失敗しました`
-    : `${done} 件のリネームが完了しました！`;
+  if (failed) {
+    msg.textContent = `${done} 件完了、${failed} 件失敗: ${errors.slice(0,2).join(' / ')}${errors.length > 2 ? ' …' : ''}`;
+  } else {
+    msg.textContent = `${done} 件のリネームが完了しました！`;
+  }
 
-  await reloadFiles(); // selectedSet.clear() は reloadFiles 内で行う
+  await reloadFiles();
 }
 
 function hideResult() {

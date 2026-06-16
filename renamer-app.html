@@ -875,6 +875,7 @@ function buildNewNameCore(stem, ext, seqIdx, lastModified) {
         newStem = newStem.replace(re, to);
       } catch { return '⚠️ 正規表現エラー'; }
     }
+    newStem = newStem.trim(); // 括弧削除後などの前後スペースを除去
     return pre + withDate(newStem) + suf + ext;
   }
 
@@ -1131,23 +1132,28 @@ function clearAllManual() {
 
 // クイックプリセット
 const PRESETS = {
-  'paren-half':  { from: '\\(.*?\\)',           to: '', regex: true },
-  'paren-full':  { from: '（.*?）',              to: '', regex: true },
-  'bracket-sq':  { from: '\\[.*?\\]',           to: '', regex: true },
-  'bracket-full':{ from: '【.*?】',              to: '', regex: true },
-  'paren-all':   { from: '[\\(（][^\\)）]*[\\)）]|\\[.*?\\]|【.*?】', to: '', regex: true },
-  'space-under': { from: ' ',                   to: '_', regex: false },
-  'trim-spaces': { from: '^\\s+|\\s+$',         to: '', regex: true },
+  // 前後スペースごと消すパターン（\s* で括弧周辺の空白も吸収）
+  'paren-half':  { from: '\\s*\\([^)]*\\)',                           to: '', regex: true },
+  'paren-full':  { from: '\\s*（[^）]*）',                             to: '', regex: true },
+  'bracket-sq':  { from: '\\s*\\[[^\\]]*\\]',                        to: '', regex: true },
+  'bracket-full':{ from: '\\s*【[^】]*】',                             to: '', regex: true },
+  'paren-all':   { from: '\\s*[\\(（][^)）\\]】]*[\\)）]|\\s*\\[[^\\]]*\\]|\\s*【[^】]*】', to: '', regex: true },
+  'space-under': { from: ' ',                                         to: '_', regex: false },
+  'trim-spaces': { from: '^\\s+|\\s+$',                              to: '', regex: true },
 };
 function applyPreset(key) {
   const p = PRESETS[key];
   if (!p) return;
-  document.getElementById('replace-from').value  = p.from;
-  document.getElementById('replace-to').value    = p.to;
+  document.getElementById('replace-from').value    = p.from;
+  document.getElementById('replace-to').value      = p.to;
   document.getElementById('replace-regex').checked = p.regex;
-  // 置換モードに切り替え
-  if (currentMode !== 'replace') setMode('replace');
-  else buildPreview();
+  currentMode = 'replace';
+  document.querySelectorAll('.mode-tab').forEach((t, i) => {
+    t.classList.toggle('active', i === 2); // 2 = replace タブ
+  });
+  document.querySelectorAll('.mode-section').forEach(s => s.classList.remove('active'));
+  document.getElementById('mode-replace').classList.add('active');
+  buildPreview();
 }
 
 // 元ファイル名コピー

@@ -754,19 +754,23 @@ async function loadFiles() {
   fileHandles = [];
   for await (const [name, handle] of dirHandle.entries()) {
     if (handle.kind === 'file') {
-      // lastModified を取得するためにFileオブジェクトも読む
       const file = await handle.getFile();
-      fileHandles.push({ name, handle, lastModified: file.lastModified });
+      fileHandles.push({ name, handle, lastModified: file.lastModified, isDir: false });
+    } else if (handle.kind === 'directory') {
+      fileHandles.push({ name, handle, lastModified: null, isDir: true });
     }
   }
 
   const sort = document.getElementById('sort-order').value;
   fileHandles.sort((a, b) => {
+    if (sort === 'name' || sort === 'name-desc' || sort === 'ext') {
+      if (a.isDir !== b.isDir) return a.isDir ? -1 : 1; // フォルダ先頭
+    }
     switch (sort) {
       case 'name-desc': return b.name.localeCompare(a.name, 'ja');
       case 'ext': {
-        const ea = a.name.includes('.') ? a.name.split('.').pop().toLowerCase() : '';
-        const eb = b.name.includes('.') ? b.name.split('.').pop().toLowerCase() : '';
+        const ea = a.isDir ? '' : (a.name.includes('.') ? a.name.split('.').pop().toLowerCase() : '');
+        const eb = b.isDir ? '' : (b.name.includes('.') ? b.name.split('.').pop().toLowerCase() : '');
         return ea !== eb ? ea.localeCompare(eb) : a.name.localeCompare(b.name, 'ja');
       }
       case 'date-desc': return (b.lastModified || 0) - (a.lastModified || 0);
@@ -774,7 +778,6 @@ async function loadFiles() {
       default: return a.name.localeCompare(b.name, 'ja');
     }
   });
-  // プレビューのソート選択と同期
   document.getElementById('sort-order-preview').value = sort;
 
   const extFilter = document.getElementById('ext-filter').value.trim();
@@ -783,7 +786,9 @@ async function loadFiles() {
       e = e.trim().toLowerCase();
       return e.startsWith('.') ? e : '.' + e;
     });
+    // 拡張子フィルタはファイルのみに適用（フォルダは常に表示）
     fileHandles = fileHandles.filter(f => {
+      if (f.isDir) return true;
       const ext = f.name.includes('.') ? '.' + f.name.split('.').pop().toLowerCase() : '';
       return exts.includes(ext);
     });
@@ -908,7 +913,7 @@ function buildPlan() {
     const stem = dotIdx > 0 ? f.name.slice(0, dotIdx) : f.name;
     const ext  = dotIdx > 0 ? f.name.slice(dotIdx) : '';
     if (!stemMap.has(stem)) stemMap.set(stem, []);
-    stemMap.get(stem).push({ handle: f.handle, name: f.name, stem, ext, lastModified: f.lastModified });
+    stemMap.get(stem).push({ handle: f.handle, name: f.name, stem, ext, lastModified: f.lastModified, isDir: f.isDir });
   });
 
   const plan = [];
@@ -928,6 +933,7 @@ function buildPlan() {
         oldName: f.name,
         newName: manualOverrides[f.name] ?? buildNewNameCore(f.stem, f.ext, idx, f.lastModified),
         isManual: f.name in manualOverrides,
+        isDir: f.isDir,
         _seqIdx: idx,
         stem: f.stem,
         ext: f.ext,
@@ -1040,7 +1046,9 @@ function fileRowHtml(p, num, seen, didx) {
   const isSel      = selectedSet.has(p.oldName);
   const isManual   = p.isManual;
   const color = extColor(p.ext);
-  const extLabel = (p.ext || '?').replace('.','').toUpperCase().slice(0,5);
+  const extLabel = p.isDir ? '📁' : ((p.ext || '?').replace('.','').toUpperCase().slice(0,5));
+  const badgeBg  = p.isDir ? 'rgba(124,106,247,.15)' : `${color}22`;
+  const badgeFg  = p.isDir ? 'var(--accent)' : color;
   const k = escAttr(p.oldName); // onclick属性用エスケープ
 
   let newPart;
@@ -1063,7 +1071,7 @@ function fileRowHtml(p, num, seen, didx) {
     data-didx="${didx}" onclick="toggleFile(event,'${k}',${didx})" style="cursor:pointer">
     <input class="cb" type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();toggleFile(event,'${k}',${didx})">
     <span class="num">${num}</span>
-    <span class="ext-badge" style="background:${color}22;color:${color}">${esc(extLabel)}</span>
+    <span class="ext-badge" style="background:${badgeBg};color:${badgeFg}">${p.isDir ? '📁' : esc(extLabel)}</span>
     <span class="old-wrap">
       <span class="old" title="${esc(p.oldName)}">${esc(p.oldName)}</span>
       <button class="copy-btn" onclick="event.stopPropagation();copyOldName('${escAttr(p.oldName)}',this)">コピー</button>
@@ -1243,14 +1251,15 @@ async function executeRename() {
 
   for (const p of toRename) {
     try {
-      // dirHandle から最新のハンドルを取得して rename
-      const freshHandle = await dirHandle.getFileHandle(p.oldName);
+      // dirHandle から最新のハンドルを取得（ファイル/フォルダで分岐）
+      const freshHandle = p.isDir
+        ? await dirHandle.getDirectoryHandle(p.oldName)
+        : await dirHandle.getFileHandle(p.oldName);
 
       if (typeof freshHandle.move === 'function') {
-        // move() 対応ブラウザ（Chrome 116+）
         await freshHandle.move(dirHandle, p.newName);
-      } else {
-        // フォールバック: コピー → 新規作成 → 旧削除
+      } else if (!p.isDir) {
+        // ファイルのフォールバック: コピー → 新規作成 → 旧削除
         const file    = await freshHandle.getFile();
         const buf     = await file.arrayBuffer();
         const newHdl  = await dirHandle.getFileHandle(p.newName, { create: true });
@@ -1258,6 +1267,8 @@ async function executeRename() {
         await writable.write(buf);
         await writable.close();
         await dirHandle.removeEntry(p.oldName);
+      } else {
+        throw new Error('このブラウザはフォルダのリネームに対応していません（Chrome 116+ が必要）');
       }
       done++;
     } catch (e) {

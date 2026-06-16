@@ -417,10 +417,13 @@
         <input type="text" id="ext-filter" placeholder="例: jpg, png, mp4">
       </div>
       <div class="field">
-        <label>ソート順</label>
-        <select id="sort-order">
-          <option value="name">ファイル名順</option>
-          <option value="name-desc">ファイル名逆順</option>
+        <label>ソート順（右パネルでも変更できます）</label>
+        <select id="sort-order" onchange="reloadFiles()">
+          <option value="name">ファイル名 昇順 (A→Z)</option>
+          <option value="name-desc">ファイル名 降順 (Z→A)</option>
+          <option value="ext">拡張子順</option>
+          <option value="date-desc">更新日時 新しい順</option>
+          <option value="date-asc">更新日時 古い順</option>
         </select>
       </div>
       <label class="check-row">
@@ -577,6 +580,22 @@
         <span>変更: <span class="stat-val" id="stat-changed" style="color:var(--green)">0</span></span>
         <span>衝突: <span class="stat-val" id="stat-conflict" style="color:var(--red)">0</span></span>
       </div>
+      <div style="display:flex;align-items:center;gap:8px;margin-left:auto">
+        <select id="sort-order-preview" onchange="syncSort(this.value)"
+          style="background:var(--bg);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:12px;padding:4px 8px;outline:none">
+          <option value="name">名前 A→Z</option>
+          <option value="name-desc">名前 Z→A</option>
+          <option value="ext">拡張子</option>
+          <option value="date-desc">更新日 新しい順</option>
+          <option value="date-asc">更新日 古い順</option>
+        </select>
+        <button onclick="reloadFiles()" title="フォルダを再読み込み"
+          style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:6px;padding:4px 10px;font-size:13px;cursor:pointer;transition:all .15s"
+          onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'"
+          onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">
+          🔄 再読込
+        </button>
+      </div>
     </div>
     <div class="view-tabs">
       <button class="view-tab active" onclick="setView('stem')">ペアでまとめる</button>
@@ -685,9 +704,21 @@ async function loadFiles() {
   }
 
   const sort = document.getElementById('sort-order').value;
-  fileHandles.sort((a, b) => sort === 'name-desc'
-    ? b.name.localeCompare(a.name, 'ja')
-    : a.name.localeCompare(b.name, 'ja'));
+  fileHandles.sort((a, b) => {
+    switch (sort) {
+      case 'name-desc': return b.name.localeCompare(a.name, 'ja');
+      case 'ext': {
+        const ea = a.name.includes('.') ? a.name.split('.').pop().toLowerCase() : '';
+        const eb = b.name.includes('.') ? b.name.split('.').pop().toLowerCase() : '';
+        return ea !== eb ? ea.localeCompare(eb) : a.name.localeCompare(b.name, 'ja');
+      }
+      case 'date-desc': return (b.lastModified || 0) - (a.lastModified || 0);
+      case 'date-asc':  return (a.lastModified || 0) - (b.lastModified || 0);
+      default: return a.name.localeCompare(b.name, 'ja');
+    }
+  });
+  // プレビューのソート選択と同期
+  document.getElementById('sort-order-preview').value = sort;
 
   const extFilter = document.getElementById('ext-filter').value.trim();
   if (extFilter) {
@@ -716,6 +747,19 @@ function setMode(mode) {
   document.querySelectorAll('.mode-section').forEach(s => s.classList.remove('active'));
   document.getElementById('mode-' + mode).classList.add('active');
   if (fileHandles.length) buildPreview();
+}
+
+// ソートを両セレクタに同期して再読み込み
+function syncSort(value) {
+  document.getElementById('sort-order').value = value;
+  document.getElementById('sort-order-preview').value = value;
+  reloadFiles();
+}
+
+async function reloadFiles() {
+  if (!dirHandle) return;
+  selectedSet.clear();
+  await loadFiles();
 }
 
 function setView(view) {
@@ -990,8 +1034,7 @@ async function executeRename() {
     ? `${done} 件完了、${failed} 件失敗しました`
     : `${done} 件のリネームが完了しました！`;
 
-  selectedSet.clear(); // 再ロード後に全選択させる
-  await loadFiles();
+  await reloadFiles(); // selectedSet.clear() は reloadFiles 内で行う
 }
 
 function hideResult() {

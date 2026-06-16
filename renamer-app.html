@@ -687,6 +687,8 @@ let currentMode = 'seq';
 let currentView = 'stem';
 let selectedSet     = new Set(); // 選択中ファイルの oldName セット
 let manualOverrides = {};        // oldName -> 手動編集したリネーム名
+let lastClickIdx    = -1;        // シフト連続選択用・直前クリック行インデックス
+let displayOrder    = [];        // 現在表示順の oldName 配列（renderPreview で更新）
 
 // 拡張子ごとの色マップ
 const EXT_COLORS = {
@@ -977,10 +979,16 @@ function renderPreview() {
   document.getElementById('sel-bar').style.display = 'flex';
   document.getElementById('sel-count').textContent = `選択中: ${selectedSet.size} / ${currentPlan.length} 件`;
 
+  displayOrder = []; // 表示順リセット
   let html = '<div class="preview-list">';
 
+  // ヘルパー: displayOrder に追加しつつ HTML 生成
+  const addRow = (p, num) => {
+    displayOrder.push(p.oldName);
+    html += fileRowHtml(p, num, seen, displayOrder.length - 1);
+  };
+
   if (currentView === 'stem') {
-    // ステムグループ表示
     const stemMap = new Map();
     currentPlan.forEach(p => {
       if (!stemMap.has(p.stem)) stemMap.set(p.stem, []);
@@ -991,14 +999,13 @@ function renderPreview() {
       const isPaired = files.length > 1;
       if (isPaired) {
         html += `<div class="stem-group">`;
-        files.forEach(p => { html += fileRowHtml(p, rowNum++, seen); });
+        files.forEach(p => addRow(p, rowNum++));
         html += `</div>`;
       } else {
-        html += fileRowHtml(files[0], rowNum++, seen);
+        addRow(files[0], rowNum++);
       }
     }
   } else if (currentView === 'ext') {
-    // 拡張子グループ表示
     const extMap = new Map();
     currentPlan.forEach(p => {
       const key = p.ext.toLowerCase() || '(拡張子なし)';
@@ -1015,11 +1022,10 @@ function renderPreview() {
         <span class="line"></span>
         <span style="font-size:11px">${files.length} 件</span>
       </div>`;
-      files.forEach(p => { html += fileRowHtml(p, rowNum++, seen); });
+      files.forEach(p => addRow(p, rowNum++));
     }
   } else {
-    // フラット表示
-    currentPlan.forEach((p, i) => { html += fileRowHtml(p, i + 1, seen); });
+    currentPlan.forEach((p, i) => addRow(p, i + 1));
   }
 
   html += '</div>';
@@ -1027,7 +1033,7 @@ function renderPreview() {
   hideResult();
 }
 
-function fileRowHtml(p, num, seen) {
+function fileRowHtml(p, num, seen, didx) {
   const isChanged  = p.oldName !== p.newName;
   const isConflict = isChanged && (seen[p.newName] || 0) > 1;
   const isSel      = selectedSet.has(p.oldName);
@@ -1053,8 +1059,8 @@ function fileRowHtml(p, num, seen) {
   }
 
   return `<div class="file-row ${isChanged ? 'changed' : ''} ${isConflict ? 'conflict' : ''} ${isSel ? 'selected' : 'deselected'}"
-    onclick="toggleFile('${k}')" style="cursor:pointer">
-    <input class="cb" type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();toggleFile('${k}')">
+    data-didx="${didx}" onclick="toggleFile(event,'${k}',${didx})" style="cursor:pointer">
+    <input class="cb" type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();toggleFile(event,'${k}',${didx})">
     <span class="num">${num}</span>
     <span class="ext-badge" style="background:${color}22;color:${color}">${esc(extLabel)}</span>
     <span class="old-wrap">
@@ -1160,14 +1166,26 @@ function copyOldName(name, btnEl) {
   });
 }
 
-function toggleFile(oldName) {
-  if (selectedSet.has(oldName)) selectedSet.delete(oldName);
-  else selectedSet.add(oldName);
+function toggleFile(event, oldName, didx) {
+  if (event.shiftKey && lastClickIdx >= 0) {
+    // シフトクリック: lastClickIdx ↔ didx の範囲を選択
+    const lo = Math.min(lastClickIdx, didx);
+    const hi = Math.max(lastClickIdx, didx);
+    const addSel = !selectedSet.has(displayOrder[didx]); // クリック先の逆状態に合わせる
+    for (let i = lo; i <= hi; i++) {
+      const n = displayOrder[i];
+      if (n) addSel ? selectedSet.add(n) : selectedSet.delete(n);
+    }
+  } else {
+    if (selectedSet.has(oldName)) selectedSet.delete(oldName);
+    else selectedSet.add(oldName);
+    lastClickIdx = didx;
+  }
   renderPreview();
 }
 
-function selectAll()     { selectedSet = new Set(currentPlan.map(p => p.oldName)); renderPreview(); }
-function deselectAll()   { selectedSet.clear(); renderPreview(); }
+function selectAll()     { lastClickIdx = -1; selectedSet = new Set(currentPlan.map(p => p.oldName)); renderPreview(); }
+function deselectAll()   { lastClickIdx = -1; selectedSet.clear(); renderPreview(); }
 function selectChanged() { selectedSet = new Set(currentPlan.filter(p => p.oldName !== p.newName).map(p => p.oldName)); renderPreview(); }
 function invertSelection() {
   const all = new Set(currentPlan.map(p => p.oldName));

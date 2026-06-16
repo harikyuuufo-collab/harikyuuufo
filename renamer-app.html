@@ -454,7 +454,7 @@
           <label>パターン</label>
           <input type="text" id="pattern-input" placeholder="例: {stem}_{n:03d}{ext}">
           <div class="hint">
-            変数: {stem} 拡張子なし名 / {ext} 拡張子 / {n} 連番 / {name} ファイル名全体<br>
+            変数: {stem} 拡張子なし名 / {ext} 拡張子 / {n} 連番 / {name} ファイル名全体 / {date} 更新日時<br>
             書式: {n:03d} → 001、{n:04d} → 0001
           </div>
         </div>
@@ -489,6 +489,41 @@
         <div class="field">
           <label>サフィックスを追加（拡張子の前）</label>
           <input type="text" id="replace-suffix" placeholder="">
+        </div>
+      </div>
+    </div>
+
+    <!-- 日付オプション -->
+    <div class="section">
+      <div class="section-title">日付を追加</div>
+      <label class="check-row" style="margin-bottom:12px">
+        <input type="checkbox" id="date-enable">
+        <span>ファイルの更新日時をファイル名に追加</span>
+      </label>
+      <div id="date-options" style="display:none">
+        <div class="field">
+          <label>日付フォーマット</label>
+          <select id="date-format">
+            <option value="YYYYMMDD">YYYYMMDD（例: 20240616）</option>
+            <option value="YYYY-MM-DD">YYYY-MM-DD（例: 2024-06-16）</option>
+            <option value="YYYY_MM_DD">YYYY_MM_DD（例: 2024_06_16）</option>
+            <option value="YYYYMMDD_HHmmss">YYYYMMDD_HHmmss（例: 20240616_143022）</option>
+            <option value="YYYY-MM-DD_HHmmss">YYYY-MM-DD HHmmss（例: 2024-06-16_143022）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>日付の位置</label>
+          <select id="date-pos">
+            <option value="prefix">先頭（日付_ファイル名）</option>
+            <option value="suffix">末尾（ファイル名_日付）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>区切り文字</label>
+          <input type="text" id="date-sep" value="_" maxlength="5">
+        </div>
+        <div class="hint" style="padding:8px 10px;background:rgba(251,191,36,.07);border-radius:6px;border:1px solid rgba(251,191,36,.2);color:var(--yellow)">
+          ⚠️ ブラウザの制限により取得できるのは<br>「最終更新日時」です（作成日は取得不可）
         </div>
       </div>
     </div>
@@ -588,10 +623,28 @@ async function selectFolder() {
   }
 }
 
+function formatDate(ts, fmt) {
+  const d = new Date(ts);
+  const pad2 = n => String(n).padStart(2, '0');
+  const Y = d.getFullYear();
+  const M = pad2(d.getMonth() + 1);
+  const D = pad2(d.getDate());
+  const h = pad2(d.getHours());
+  const m = pad2(d.getMinutes());
+  const s = pad2(d.getSeconds());
+  return fmt
+    .replace('YYYY', Y).replace('MM', M).replace('DD', D)
+    .replace('HH', h).replace('mm', m).replace('ss', s);
+}
+
 async function loadFiles() {
   fileHandles = [];
   for await (const [name, handle] of dirHandle.entries()) {
-    if (handle.kind === 'file') fileHandles.push({ name, handle });
+    if (handle.kind === 'file') {
+      // lastModified を取得するためにFileオブジェクトも読む
+      const file = await handle.getFile();
+      fileHandles.push({ name, handle, lastModified: file.lastModified });
+    }
   }
 
   const sort = document.getElementById('sort-order').value;
@@ -609,6 +662,7 @@ async function loadFiles() {
       const ext = f.name.includes('.') ? '.' + f.name.split('.').pop().toLowerCase() : '';
       return exts.includes(ext);
     });
+
   }
 
   document.getElementById('folder-name').style.display = 'block';
@@ -636,21 +690,35 @@ function setView(view) {
 }
 
 // ===== ファイル名生成 =====
-function applyPattern(pattern, stem, ext, n) {
+function applyPattern(pattern, stem, ext, n, dateStr) {
   return pattern
     .replace(/\{stem\}/g, stem)
     .replace(/\{ext\}/g, ext)
     .replace(/\{name\}/g, stem + ext)
     .replace(/\{n:(\d+)d\}/g, (_, w) => String(n).padStart(parseInt(w), '0'))
-    .replace(/\{n\}/g, String(n));
+    .replace(/\{n\}/g, String(n))
+    .replace(/\{date\}/g, dateStr || '');
 }
 
-function buildNewNameCore(stem, ext, seqIdx) {
+function buildNewNameCore(stem, ext, seqIdx, lastModified) {
+  // 日付文字列の生成
+  const dateEnable = document.getElementById('date-enable').checked;
+  const dateFmt    = document.getElementById('date-format').value;
+  const dateStr    = (dateEnable && lastModified) ? formatDate(lastModified, dateFmt) : '';
+  const dateSep    = document.getElementById('date-sep').value;
+  const datePos    = document.getElementById('date-pos').value;
+
+  // 日付をステムに付加するヘルパー
+  function withDate(s) {
+    if (!dateStr) return s;
+    return datePos === 'prefix' ? dateStr + dateSep + s : s + dateSep + dateStr;
+  }
+
   if (currentMode === 'pattern') {
     const pattern = document.getElementById('pattern-input').value;
-    if (!pattern) return stem + ext;
+    if (!pattern) return withDate(stem) + ext;
     const start = parseInt(document.getElementById('pattern-start').value) || 1;
-    return applyPattern(pattern, stem, ext, start + seqIdx);
+    return applyPattern(pattern, stem, ext, start + seqIdx, dateStr);
   }
 
   if (currentMode === 'replace') {
@@ -668,7 +736,7 @@ function buildNewNameCore(stem, ext, seqIdx) {
         newStem = newStem.replace(re, to);
       } catch { return '⚠️ 正規表現エラー'; }
     }
-    return pre + newStem + suf + ext;
+    return pre + withDate(newStem) + suf + ext;
   }
 
   // 連番モード
@@ -686,7 +754,7 @@ function buildNewNameCore(stem, ext, seqIdx) {
   else if (pos === 'replace')  newStem = pre + num + suf;
   else                         newStem = pre + stem + sep + num + suf;
 
-  return newStem + (newExt.startsWith('.') ? newExt : (newExt ? '.' + newExt : ''));
+  return withDate(newStem) + (newExt.startsWith('.') ? newExt : (newExt ? '.' + newExt : ''));
 }
 
 // ===== プラン生成 =====
@@ -700,7 +768,7 @@ function buildPlan() {
     const stem = dotIdx > 0 ? f.name.slice(0, dotIdx) : f.name;
     const ext  = dotIdx > 0 ? f.name.slice(dotIdx) : '';
     if (!stemMap.has(stem)) stemMap.set(stem, []);
-    stemMap.get(stem).push({ handle: f.handle, name: f.name, stem, ext });
+    stemMap.get(stem).push({ handle: f.handle, name: f.name, stem, ext, lastModified: f.lastModified });
   });
 
   const plan = [];
@@ -718,9 +786,10 @@ function buildPlan() {
       plan.push({
         handle: f.handle,
         oldName: f.name,
-        newName: buildNewNameCore(f.stem, f.ext, idx),
+        newName: buildNewNameCore(f.stem, f.ext, idx, f.lastModified),
         stem: f.stem,
         ext: f.ext,
+        lastModified: f.lastModified,
         paired,
       });
     });
@@ -858,6 +927,12 @@ async function executeRename() {
 function hideResult() {
   document.getElementById('result-bar').className = 'result-bar';
 }
+
+// 日付チェックボックスで日付オプションの表示切り替え
+document.getElementById('date-enable').addEventListener('change', function() {
+  document.getElementById('date-options').style.display = this.checked ? 'block' : 'none';
+  if (fileHandles.length) buildPreview();
+});
 
 document.querySelectorAll('input, select').forEach(el => {
   el.addEventListener('input',  () => { if (fileHandles.length) buildPreview(); });

@@ -1,0 +1,692 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>ファイルリネーマー</title>
+<style>
+  :root {
+    --bg: #0f0f13;
+    --surface: #1a1a24;
+    --surface2: #22222f;
+    --border: #2e2e40;
+    --accent: #7c6af7;
+    --accent2: #5a4fd4;
+    --green: #4ade80;
+    --red: #f87171;
+    --yellow: #fbbf24;
+    --text: #e8e8f0;
+    --muted: #888898;
+    --radius: 10px;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    font-family: 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  header {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 18px 28px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface);
+  }
+  header h1 { font-size: 20px; font-weight: 700; letter-spacing: -0.5px; }
+  header span { font-size: 13px; color: var(--muted); }
+  .badge {
+    background: var(--accent);
+    color: #fff;
+    font-size: 11px;
+    padding: 2px 8px;
+    border-radius: 20px;
+    font-weight: 600;
+  }
+
+  main {
+    display: grid;
+    grid-template-columns: 340px 1fr;
+    gap: 0;
+    flex: 1;
+    overflow: hidden;
+    height: calc(100vh - 62px);
+  }
+
+  /* ===== 左パネル ===== */
+  .panel-left {
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow-y: auto;
+  }
+  .section {
+    padding: 18px 20px;
+    border-bottom: 1px solid var(--border);
+  }
+  .section-title {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-bottom: 14px;
+  }
+
+  /* フォルダ選択 */
+  #drop-zone {
+    border: 2px dashed var(--border);
+    border-radius: var(--radius);
+    padding: 24px;
+    text-align: center;
+    cursor: pointer;
+    transition: all .2s;
+    background: var(--bg);
+  }
+  #drop-zone:hover, #drop-zone.drag-over {
+    border-color: var(--accent);
+    background: rgba(124,106,247,.08);
+  }
+  #drop-zone .icon { font-size: 32px; margin-bottom: 8px; }
+  #drop-zone p { font-size: 13px; color: var(--muted); }
+  #drop-zone strong { color: var(--accent); }
+  #folder-name {
+    margin-top: 10px;
+    font-size: 12px;
+    color: var(--green);
+    word-break: break-all;
+    display: none;
+  }
+
+  /* モード選択 */
+  .mode-tabs {
+    display: flex;
+    gap: 4px;
+    background: var(--bg);
+    border-radius: 8px;
+    padding: 4px;
+    margin-bottom: 16px;
+  }
+  .mode-tab {
+    flex: 1;
+    padding: 7px 4px;
+    font-size: 12px;
+    font-weight: 600;
+    border: none;
+    background: transparent;
+    color: var(--muted);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .mode-tab.active {
+    background: var(--accent);
+    color: #fff;
+  }
+
+  /* フォームパーツ */
+  label { font-size: 12px; color: var(--muted); display: block; margin-bottom: 5px; }
+  input[type=text], input[type=number], select {
+    width: 100%;
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 7px;
+    color: var(--text);
+    font-size: 13px;
+    padding: 8px 10px;
+    outline: none;
+    transition: border .15s;
+  }
+  input[type=text]:focus, input[type=number]:focus, select:focus {
+    border-color: var(--accent);
+  }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  .field { margin-bottom: 12px; }
+  .hint { font-size: 11px; color: var(--muted); margin-top: 4px; }
+
+  .mode-section { display: none; }
+  .mode-section.active { display: block; }
+
+  /* チェックボックス */
+  .check-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 10px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  .check-row input[type=checkbox] {
+    width: 16px; height: 16px;
+    accent-color: var(--accent);
+    cursor: pointer;
+  }
+
+  /* 実行ボタン */
+  .btn {
+    width: 100%;
+    padding: 12px;
+    border-radius: var(--radius);
+    border: none;
+    font-size: 14px;
+    font-weight: 700;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .btn-primary {
+    background: var(--accent);
+    color: #fff;
+  }
+  .btn-primary:hover { background: var(--accent2); }
+  .btn-primary:disabled { background: var(--border); color: var(--muted); cursor: not-allowed; }
+  .btn-outline {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+    margin-top: 8px;
+  }
+  .btn-outline:hover { border-color: var(--accent); color: var(--accent); }
+
+  /* ===== 右パネル ===== */
+  .panel-right {
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .preview-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 14px 20px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    flex-shrink: 0;
+  }
+  .preview-header h2 { font-size: 14px; font-weight: 600; }
+  .stats { display: flex; gap: 16px; font-size: 12px; color: var(--muted); }
+  .stat-val { color: var(--text); font-weight: 600; }
+
+  .preview-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 8px 12px;
+  }
+  .file-row {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 7px 10px;
+    border-radius: 7px;
+    font-size: 13px;
+    transition: background .1s;
+  }
+  .file-row:hover { background: var(--surface); }
+  .file-row .num { color: var(--muted); font-size: 11px; width: 28px; text-align: right; flex-shrink: 0; }
+  .file-row .old { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-row .arrow { color: var(--border); flex-shrink: 0; }
+  .file-row .new { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .file-row.changed .old { color: var(--yellow); }
+  .file-row.changed .arrow { color: var(--accent); }
+  .file-row.changed .new { color: var(--green); font-weight: 600; }
+  .file-row.conflict .new { color: var(--red); }
+
+  .empty-state {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    color: var(--muted);
+    gap: 12px;
+    padding: 40px;
+  }
+  .empty-state .icon { font-size: 48px; opacity: .4; }
+  .empty-state p { font-size: 14px; text-align: center; line-height: 1.6; }
+
+  /* 結果バー */
+  .result-bar {
+    padding: 12px 20px;
+    border-top: 1px solid var(--border);
+    background: var(--surface2);
+    font-size: 13px;
+    display: none;
+    align-items: center;
+    gap: 12px;
+  }
+  .result-bar.show { display: flex; }
+  .result-bar.success { border-top-color: var(--green); }
+  .result-bar.error { border-top-color: var(--red); }
+  .result-icon { font-size: 18px; }
+
+  /* スクロールバー */
+  ::-webkit-scrollbar { width: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+  /* API非対応 */
+  .api-warning {
+    background: rgba(251,191,36,.1);
+    border: 1px solid var(--yellow);
+    color: var(--yellow);
+    border-radius: var(--radius);
+    padding: 12px 14px;
+    font-size: 12px;
+    line-height: 1.6;
+    display: none;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div style="font-size:22px">✏️</div>
+  <h1>ファイルリネーマー</h1>
+  <span class="badge">連番対応</span>
+  <span style="margin-left:auto;font-size:12px;color:var(--muted)">Chrome / Edge で動作</span>
+</header>
+
+<main>
+  <!-- 左パネル -->
+  <div class="panel-left">
+
+    <!-- フォルダ選択 -->
+    <div class="section">
+      <div class="section-title">フォルダ選択</div>
+      <div id="drop-zone" onclick="selectFolder()">
+        <div class="icon">📂</div>
+        <p>クリックでフォルダを選択</p>
+        <p style="margin-top:4px;font-size:11px">または <strong>ドラッグ＆ドロップ</strong></p>
+      </div>
+      <div id="folder-name"></div>
+      <div class="api-warning" id="api-warning" style="margin-top:10px">
+        ⚠️ お使いのブラウザはFile System Access APIに対応していません。<br>
+        Chrome または Edge をお使いください。
+      </div>
+    </div>
+
+    <!-- 拡張子フィルタ -->
+    <div class="section">
+      <div class="section-title">フィルタ</div>
+      <div class="field">
+        <label>拡張子フィルタ（カンマ区切り、空欄=全て）</label>
+        <input type="text" id="ext-filter" placeholder="例: jpg, png, mp4">
+      </div>
+      <div class="field">
+        <label>ソート順</label>
+        <select id="sort-order">
+          <option value="name">ファイル名順</option>
+          <option value="name-desc">ファイル名逆順</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- リネームモード -->
+    <div class="section">
+      <div class="section-title">リネームモード</div>
+      <div class="mode-tabs">
+        <button class="mode-tab active" onclick="setMode('seq')">連番</button>
+        <button class="mode-tab" onclick="setMode('pattern')">パターン</button>
+        <button class="mode-tab" onclick="setMode('replace')">置換</button>
+      </div>
+
+      <!-- 連番モード -->
+      <div class="mode-section active" id="mode-seq">
+        <div class="field">
+          <label>プレフィックス（連番の前に付ける文字列）</label>
+          <input type="text" id="seq-prefix" placeholder="例: IMG_ photo_">
+        </div>
+        <div class="field">
+          <label>サフィックス（連番の後・拡張子の前）</label>
+          <input type="text" id="seq-suffix" placeholder="例: _final">
+        </div>
+        <div class="row field">
+          <div>
+            <label>開始番号</label>
+            <input type="number" id="seq-start" value="1" min="0">
+          </div>
+          <div>
+            <label>桁数（ゼロ埋め）</label>
+            <input type="number" id="seq-pad" value="3" min="1" max="10">
+          </div>
+        </div>
+        <div class="field">
+          <label>区切り文字</label>
+          <input type="text" id="seq-sep" value="_" maxlength="5">
+        </div>
+        <div class="field">
+          <label>連番の位置</label>
+          <select id="seq-pos">
+            <option value="suffix">末尾（元のファイル名_001）</option>
+            <option value="prefix">先頭（001_元のファイル名）</option>
+            <option value="replace">連番のみ（001）</option>
+          </select>
+        </div>
+        <div class="field">
+          <label>新しい拡張子（空欄=変更なし）</label>
+          <input type="text" id="seq-newext" placeholder="例: .jpg">
+        </div>
+      </div>
+
+      <!-- パターンモード -->
+      <div class="mode-section" id="mode-pattern">
+        <div class="field">
+          <label>パターン</label>
+          <input type="text" id="pattern-input" placeholder="例: {stem}_{n:03d}{ext}">
+          <div class="hint">
+            変数: {stem} 拡張子なし名 / {ext} 拡張子 / {n} 連番 / {name} ファイル名全体<br>
+            書式: {n:03d} → 001、{n:04d} → 0001
+          </div>
+        </div>
+        <div class="field">
+          <label>開始番号</label>
+          <input type="number" id="pattern-start" value="1" min="0">
+        </div>
+      </div>
+
+      <!-- 置換モード -->
+      <div class="mode-section" id="mode-replace">
+        <div class="field">
+          <label>検索文字列</label>
+          <input type="text" id="replace-from" placeholder="置換前">
+        </div>
+        <div class="field">
+          <label>置換後の文字列</label>
+          <input type="text" id="replace-to" placeholder="置換後（空欄=削除）">
+        </div>
+        <label class="check-row">
+          <input type="checkbox" id="replace-regex">
+          正規表現を使う
+        </label>
+        <label class="check-row">
+          <input type="checkbox" id="replace-case">
+          大文字・小文字を区別する
+        </label>
+        <div class="field" style="margin-top:8px">
+          <label>プレフィックスを追加</label>
+          <input type="text" id="replace-prefix" placeholder="">
+        </div>
+        <div class="field">
+          <label>サフィックスを追加（拡張子の前）</label>
+          <input type="text" id="replace-suffix" placeholder="">
+        </div>
+      </div>
+    </div>
+
+    <!-- ボタン -->
+    <div class="section" style="border-bottom:none">
+      <button class="btn btn-primary" id="btn-preview" onclick="buildPreview()" disabled>
+        プレビュー更新
+      </button>
+      <button class="btn btn-outline" id="btn-exec" onclick="executeRename()" disabled>
+        ⚡ リネーム実行
+      </button>
+    </div>
+
+  </div>
+
+  <!-- 右パネル -->
+  <div class="panel-right">
+    <div class="preview-header">
+      <h2>プレビュー</h2>
+      <div class="stats">
+        <span>ファイル数: <span class="stat-val" id="stat-total">0</span></span>
+        <span>変更: <span class="stat-val" id="stat-changed" style="color:var(--green)">0</span></span>
+        <span>衝突: <span class="stat-val" id="stat-conflict" style="color:var(--red)">0</span></span>
+      </div>
+    </div>
+
+    <div id="preview-content">
+      <div class="empty-state">
+        <div class="icon">📁</div>
+        <p>フォルダを選択して<br>プレビューを確認してください</p>
+      </div>
+    </div>
+
+    <div class="result-bar" id="result-bar">
+      <span class="result-icon" id="result-icon"></span>
+      <span id="result-msg"></span>
+    </div>
+  </div>
+</main>
+
+<script>
+let dirHandle = null;
+let fileHandles = [];
+let currentPlan = [];
+let currentMode = 'seq';
+
+// File System Access API サポート確認
+if (!('showDirectoryPicker' in window)) {
+  document.getElementById('api-warning').style.display = 'block';
+}
+
+// ドラッグ＆ドロップ
+const dz = document.getElementById('drop-zone');
+dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
+dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
+dz.addEventListener('drop', async e => {
+  e.preventDefault();
+  dz.classList.remove('drag-over');
+  const items = [...e.dataTransfer.items];
+  for (const item of items) {
+    if (item.kind === 'file') {
+      try {
+        const h = await item.getAsFileSystemHandle();
+        if (h.kind === 'directory') {
+          dirHandle = h;
+          await loadFiles();
+          return;
+        }
+      } catch {}
+    }
+  }
+});
+
+async function selectFolder() {
+  if (!('showDirectoryPicker' in window)) {
+    alert('このブラウザはサポートされていません。Chrome または Edge をお使いください。');
+    return;
+  }
+  try {
+    dirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    await loadFiles();
+  } catch (e) {
+    if (e.name !== 'AbortError') console.error(e);
+  }
+}
+
+async function loadFiles() {
+  fileHandles = [];
+  for await (const [name, handle] of dirHandle.entries()) {
+    if (handle.kind === 'file') fileHandles.push({ name, handle });
+  }
+
+  const sort = document.getElementById('sort-order').value;
+  fileHandles.sort((a, b) => sort === 'name-desc'
+    ? b.name.localeCompare(a.name, 'ja')
+    : a.name.localeCompare(b.name, 'ja'));
+
+  const extFilter = document.getElementById('ext-filter').value.trim();
+  if (extFilter) {
+    const exts = extFilter.split(',').map(e => {
+      e = e.trim().toLowerCase();
+      return e.startsWith('.') ? e : '.' + e;
+    });
+    fileHandles = fileHandles.filter(f => {
+      const ext = '.' + f.name.split('.').pop().toLowerCase();
+      return exts.includes(ext);
+    });
+  }
+
+  const fnEl = document.getElementById('folder-name');
+  fnEl.style.display = 'block';
+  fnEl.textContent = `📂 ${dirHandle.name}  (${fileHandles.length} ファイル)`;
+
+  document.getElementById('btn-preview').disabled = false;
+  buildPreview();
+}
+
+// モード切替
+function setMode(mode) {
+  currentMode = mode;
+  document.querySelectorAll('.mode-tab').forEach((t, i) => {
+    t.classList.toggle('active', ['seq','pattern','replace'][i] === mode);
+  });
+  document.querySelectorAll('.mode-section').forEach(s => s.classList.remove('active'));
+  document.getElementById('mode-' + mode).classList.add('active');
+  if (fileHandles.length) buildPreview();
+}
+
+// パターン書式展開
+function applyPattern(pattern, stem, ext, n) {
+  return pattern
+    .replace(/\{stem\}/g, stem)
+    .replace(/\{ext\}/g, ext)
+    .replace(/\{name\}/g, stem + ext)
+    .replace(/\{n:(\d+)d\}/g, (_, w) => String(n).padStart(parseInt(w), '0'))
+    .replace(/\{n\}/g, String(n));
+}
+
+function buildNewName(item, index) {
+  const name = item.name;
+  const dotIdx = name.lastIndexOf('.');
+  const stem = dotIdx > 0 ? name.slice(0, dotIdx) : name;
+  const ext  = dotIdx > 0 ? name.slice(dotIdx) : '';
+
+  if (currentMode === 'pattern') {
+    const pattern = document.getElementById('pattern-input').value;
+    if (!pattern) return name;
+    const start = parseInt(document.getElementById('pattern-start').value) || 1;
+    return applyPattern(pattern, stem, ext, start + index);
+  }
+
+  if (currentMode === 'replace') {
+    let newStem = stem;
+    const from  = document.getElementById('replace-from').value;
+    const to    = document.getElementById('replace-to').value;
+    const regex = document.getElementById('replace-regex').checked;
+    const caseSens = document.getElementById('replace-case').checked;
+    const pre   = document.getElementById('replace-prefix').value;
+    const suf   = document.getElementById('replace-suffix').value;
+    if (from) {
+      try {
+        const flags = regex ? (caseSens ? 'g' : 'gi') : (caseSens ? 'g' : 'gi');
+        const re = regex ? new RegExp(from, flags) : new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
+        newStem = newStem.replace(re, to);
+      } catch { return '⚠️ 正規表現エラー'; }
+    }
+    return pre + newStem + suf + ext;
+  }
+
+  // 連番モード
+  const start  = parseInt(document.getElementById('seq-start').value) || 1;
+  const pad    = parseInt(document.getElementById('seq-pad').value) || 3;
+  const sep    = document.getElementById('seq-sep').value;
+  const pos    = document.getElementById('seq-pos').value;
+  const pre    = document.getElementById('seq-prefix').value;
+  const suf    = document.getElementById('seq-suffix').value;
+  const newExt = document.getElementById('seq-newext').value.trim() || ext;
+  const num    = String(start + index).padStart(pad, '0');
+
+  let newStem;
+  if (pos === 'prefix')  newStem = pre + num + sep + stem + suf;
+  else if (pos === 'replace') newStem = pre + num + suf;
+  else                   newStem = pre + stem + sep + num + suf;
+
+  return newStem + (newExt.startsWith('.') ? newExt : (newExt ? '.' + newExt : ''));
+}
+
+function buildPreview() {
+  if (!fileHandles.length) return;
+  currentPlan = fileHandles.map((item, i) => ({
+    handle: item.handle,
+    oldName: item.name,
+    newName: buildNewName(item, i),
+  }));
+
+  // 衝突チェック
+  const seen = {};
+  currentPlan.forEach(p => {
+    if (p.newName !== p.oldName) {
+      seen[p.newName] = (seen[p.newName] || 0) + 1;
+    }
+  });
+
+  let changed = 0, conflicts = 0;
+  const rows = currentPlan.map((p, i) => {
+    const isChanged = p.oldName !== p.newName;
+    const isConflict = isChanged && seen[p.newName] > 1;
+    if (isChanged) changed++;
+    if (isConflict) conflicts++;
+    return `<div class="file-row ${isChanged ? 'changed' : ''} ${isConflict ? 'conflict' : ''}">
+      <span class="num">${i + 1}</span>
+      <span class="old" title="${esc(p.oldName)}">${esc(p.oldName)}</span>
+      <span class="arrow">${isChanged ? '→' : '='}</span>
+      <span class="new" title="${esc(p.newName)}">${esc(p.newName)}</span>
+    </div>`;
+  }).join('');
+
+  document.getElementById('preview-content').innerHTML =
+    `<div class="preview-list">${rows}</div>`;
+  document.getElementById('stat-total').textContent = currentPlan.length;
+  document.getElementById('stat-changed').textContent = changed;
+  document.getElementById('stat-conflict').textContent = conflicts;
+  document.getElementById('btn-exec').disabled = changed === 0 || conflicts > 0;
+
+  hideResult();
+}
+
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+async function executeRename() {
+  const toRename = currentPlan.filter(p => p.oldName !== p.newName);
+  if (!toRename.length) return;
+
+  const ok = confirm(`${toRename.length} 件のファイルをリネームします。よろしいですか？`);
+  if (!ok) return;
+
+  let done = 0, failed = 0;
+  // ファイルをリネームするには move が必要 — FileSystemFileHandle に直接 rename はないため
+  // ディレクトリハンドルの move() API を使う
+  for (const p of toRename) {
+    try {
+      await p.handle.move(dirHandle, p.newName);
+      done++;
+    } catch (e) {
+      console.error(e);
+      failed++;
+    }
+  }
+
+  const bar = document.getElementById('result-bar');
+  const icon = document.getElementById('result-icon');
+  const msg  = document.getElementById('result-msg');
+  bar.className = 'result-bar show ' + (failed ? 'error' : 'success');
+  icon.textContent = failed ? '❌' : '✅';
+  msg.textContent = failed
+    ? `${done} 件完了、${failed} 件失敗しました`
+    : `${done} 件のリネームが完了しました！`;
+
+  // ファイル一覧を再読み込み
+  await loadFiles();
+}
+
+function hideResult() {
+  document.getElementById('result-bar').className = 'result-bar';
+}
+
+// 設定変更時に自動プレビュー
+document.querySelectorAll('input, select').forEach(el => {
+  el.addEventListener('input', () => { if (fileHandles.length) buildPreview(); });
+  el.addEventListener('change', () => { if (fileHandles.length) buildPreview(); });
+});
+</script>
+</body>
+</html>

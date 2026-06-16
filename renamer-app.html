@@ -230,7 +230,17 @@
   .file-row.selected:hover { background: rgba(124,106,247,.15); }
   .file-row .cb { flex-shrink: 0; width: 16px; height: 16px; accent-color: var(--accent); cursor: pointer; }
   .file-row .num { color: var(--muted); font-size: 11px; width: 24px; text-align: right; flex-shrink: 0; }
+  .file-row .old-wrap { flex: 1; display: flex; align-items: center; gap: 4px; min-width: 0; overflow: hidden; }
   .file-row .old { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .copy-btn {
+    flex-shrink: 0; font-size: 11px; padding: 1px 6px;
+    background: transparent; border: 1px solid var(--border); border-radius: 4px;
+    color: var(--muted); cursor: pointer; opacity: 0; transition: opacity .15s, color .15s;
+    white-space: nowrap;
+  }
+  .file-row:hover .copy-btn { opacity: 1; }
+  .copy-btn:hover { color: var(--accent); border-color: var(--accent); }
+  .copy-btn.copied { color: var(--green); border-color: var(--green); opacity: 1; }
   .file-row .arrow { color: var(--border); flex-shrink: 0; }
   .file-row .new { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .file-row.changed .old { color: var(--yellow); }
@@ -260,6 +270,14 @@
     padding: 1px 5px; cursor: pointer; flex-shrink: 0; white-space: nowrap;
   }
   .manual-badge:hover { background: rgba(124,106,247,.3); }
+  /* クイック操作プリセットボタン */
+  .preset-btn {
+    font-size: 11px; padding: 4px 9px; border-radius: 5px;
+    background: var(--bg); border: 1px solid var(--border);
+    color: var(--text); cursor: pointer; transition: all .15s;
+    white-space: nowrap;
+  }
+  .preset-btn:hover { border-color: var(--accent); color: var(--accent); background: rgba(124,106,247,.08); }
 
   /* 選択ツールバー */
   .sel-bar {
@@ -519,6 +537,18 @@
 
       <!-- 置換モード -->
       <div class="mode-section" id="mode-replace">
+        <div style="margin-bottom:12px">
+          <div style="font-size:11px;color:var(--muted);margin-bottom:7px;font-weight:700;letter-spacing:.5px">クイック操作</div>
+          <div style="display:flex;flex-wrap:wrap;gap:5px">
+            <button class="preset-btn" onclick="applyPreset('paren-half')">( ) 削除</button>
+            <button class="preset-btn" onclick="applyPreset('paren-full')">（ ）削除</button>
+            <button class="preset-btn" onclick="applyPreset('bracket-sq')">[ ] 削除</button>
+            <button class="preset-btn" onclick="applyPreset('bracket-full')">【 】削除</button>
+            <button class="preset-btn" onclick="applyPreset('paren-all')">括弧すべて削除</button>
+            <button class="preset-btn" onclick="applyPreset('space-under')">スペース→_</button>
+            <button class="preset-btn" onclick="applyPreset('trim-spaces')">前後スペース除去</button>
+          </div>
+        </div>
         <div class="field">
           <label>検索文字列</label>
           <input type="text" id="replace-from" placeholder="置換前">
@@ -1027,7 +1057,10 @@ function fileRowHtml(p, num, seen) {
     <input class="cb" type="checkbox" ${isSel ? 'checked' : ''} onclick="event.stopPropagation();toggleFile('${k}')">
     <span class="num">${num}</span>
     <span class="ext-badge" style="background:${color}22;color:${color}">${esc(extLabel)}</span>
-    <span class="old" title="${esc(p.oldName)}">${esc(p.oldName)}</span>
+    <span class="old-wrap">
+      <span class="old" title="${esc(p.oldName)}">${esc(p.oldName)}</span>
+      <button class="copy-btn" onclick="event.stopPropagation();copyOldName('${escAttr(p.oldName)}',this)">コピー</button>
+    </span>
     <span class="arrow">${isChanged ? '→' : '='}</span>
     ${newPart}
   </div>`;
@@ -1088,6 +1121,43 @@ function clearManual(oldName) {
 function clearAllManual() {
   manualOverrides = {};
   buildPreview();
+}
+
+// クイックプリセット
+const PRESETS = {
+  'paren-half':  { from: '\\(.*?\\)',           to: '', regex: true },
+  'paren-full':  { from: '（.*?）',              to: '', regex: true },
+  'bracket-sq':  { from: '\\[.*?\\]',           to: '', regex: true },
+  'bracket-full':{ from: '【.*?】',              to: '', regex: true },
+  'paren-all':   { from: '[\\(（][^\\)）]*[\\)）]|\\[.*?\\]|【.*?】', to: '', regex: true },
+  'space-under': { from: ' ',                   to: '_', regex: false },
+  'trim-spaces': { from: '^\\s+|\\s+$',         to: '', regex: true },
+};
+function applyPreset(key) {
+  const p = PRESETS[key];
+  if (!p) return;
+  document.getElementById('replace-from').value  = p.from;
+  document.getElementById('replace-to').value    = p.to;
+  document.getElementById('replace-regex').checked = p.regex;
+  // 置換モードに切り替え
+  if (currentMode !== 'replace') setMode('replace');
+  else buildPreview();
+}
+
+// 元ファイル名コピー
+function copyOldName(name, btnEl) {
+  navigator.clipboard.writeText(name).then(() => {
+    btnEl.textContent = '✓';
+    btnEl.classList.add('copied');
+    setTimeout(() => { btnEl.textContent = 'コピー'; btnEl.classList.remove('copied'); }, 1500);
+  }).catch(() => {
+    // フォールバック
+    const ta = document.createElement('textarea');
+    ta.value = name; document.body.appendChild(ta); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    btnEl.textContent = '✓'; btnEl.classList.add('copied');
+    setTimeout(() => { btnEl.textContent = 'コピー'; btnEl.classList.remove('copied'); }, 1500);
+  });
 }
 
 function toggleFile(oldName) {

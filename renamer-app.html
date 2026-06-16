@@ -279,6 +279,77 @@
     line-height: 1.6;
     display: none;
   }
+
+  /* 拡張子バッジ */
+  .ext-badge {
+    display: inline-block;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 6px;
+    border-radius: 4px;
+    letter-spacing: .5px;
+    text-transform: uppercase;
+    flex-shrink: 0;
+    min-width: 38px;
+    text-align: center;
+  }
+
+  /* 拡張子グループヘッダー */
+  .ext-group-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 10px 4px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: .8px;
+    text-transform: uppercase;
+    color: var(--muted);
+    margin-top: 4px;
+  }
+  .ext-group-header .line {
+    flex: 1;
+    height: 1px;
+    background: var(--border);
+  }
+
+  /* ステムグループ（ペア表示） */
+  .stem-group {
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    margin: 4px 0;
+    overflow: hidden;
+  }
+  .stem-group .file-row:not(:last-child) {
+    border-bottom: 1px solid var(--border);
+  }
+  .stem-group .file-row { border-radius: 0; }
+
+  /* ビュー切り替え */
+  .view-tabs {
+    display: flex;
+    gap: 4px;
+    padding: 10px 12px;
+    border-bottom: 1px solid var(--border);
+    background: var(--surface2);
+    flex-shrink: 0;
+  }
+  .view-tab {
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    border: 1px solid var(--border);
+    background: transparent;
+    color: var(--muted);
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all .15s;
+  }
+  .view-tab.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+  }
 </style>
 </head>
 <body>
@@ -287,6 +358,7 @@
   <div style="font-size:22px">✏️</div>
   <h1>ファイルリネーマー</h1>
   <span class="badge">連番対応</span>
+  <span class="badge" style="background:var(--green);color:#000">ペア対応</span>
   <span style="margin-left:auto;font-size:12px;color:var(--muted)">Chrome / Edge で動作</span>
 </header>
 
@@ -323,6 +395,10 @@
           <option value="name-desc">ファイル名逆順</option>
         </select>
       </div>
+      <label class="check-row">
+        <input type="checkbox" id="pair-mode" checked>
+        <span>同じファイル名で拡張子違いを同一連番にする</span>
+      </label>
     </div>
 
     <!-- リネームモード -->
@@ -439,6 +515,11 @@
         <span>衝突: <span class="stat-val" id="stat-conflict" style="color:var(--red)">0</span></span>
       </div>
     </div>
+    <div class="view-tabs">
+      <button class="view-tab active" onclick="setView('stem')">ペアでまとめる</button>
+      <button class="view-tab" onclick="setView('ext')">拡張子でグループ</button>
+      <button class="view-tab" onclick="setView('flat')">フラット</button>
+    </div>
 
     <div id="preview-content">
       <div class="empty-state">
@@ -456,32 +537,39 @@
 
 <script>
 let dirHandle = null;
-let fileHandles = [];
-let currentPlan = [];
+let fileHandles = [];   // [{name, handle}]
+let currentPlan = [];   // [{handle, oldName, newName, stem, ext, seqIdx, paired}]
 let currentMode = 'seq';
+let currentView = 'stem';
 
-// File System Access API サポート確認
+// 拡張子ごとの色マップ
+const EXT_COLORS = {
+  jpg: '#e97', jpeg: '#e97', png: '#7be', gif: '#7be', webp: '#7be', bmp: '#7be', tiff: '#7be',
+  raw: '#fb7', cr2: '#fb7', nef: '#fb7', arw: '#fb7', dng: '#fb7', orf: '#fb7',
+  mp4: '#a7f', mov: '#a7f', avi: '#a7f', mkv: '#a7f', wmv: '#a7f',
+  mp3: '#7fa', wav: '#7fa', flac: '#7fa', aac: '#7fa',
+  pdf: '#f77', doc: '#77f', docx: '#77f', xls: '#7f7', xlsx: '#7f7', ppt: '#fa7', pptx: '#fa7',
+  xmp: '#fc7', sidecar: '#fc7',
+};
+function extColor(ext) {
+  return EXT_COLORS[(ext || '').replace('.','').toLowerCase()] || '#888';
+}
+
 if (!('showDirectoryPicker' in window)) {
   document.getElementById('api-warning').style.display = 'block';
 }
 
-// ドラッグ＆ドロップ
 const dz = document.getElementById('drop-zone');
 dz.addEventListener('dragover', e => { e.preventDefault(); dz.classList.add('drag-over'); });
 dz.addEventListener('dragleave', () => dz.classList.remove('drag-over'));
 dz.addEventListener('drop', async e => {
   e.preventDefault();
   dz.classList.remove('drag-over');
-  const items = [...e.dataTransfer.items];
-  for (const item of items) {
+  for (const item of [...e.dataTransfer.items]) {
     if (item.kind === 'file') {
       try {
         const h = await item.getAsFileSystemHandle();
-        if (h.kind === 'directory') {
-          dirHandle = h;
-          await loadFiles();
-          return;
-        }
+        if (h.kind === 'directory') { dirHandle = h; await loadFiles(); return; }
       } catch {}
     }
   }
@@ -518,20 +606,17 @@ async function loadFiles() {
       return e.startsWith('.') ? e : '.' + e;
     });
     fileHandles = fileHandles.filter(f => {
-      const ext = '.' + f.name.split('.').pop().toLowerCase();
+      const ext = f.name.includes('.') ? '.' + f.name.split('.').pop().toLowerCase() : '';
       return exts.includes(ext);
     });
   }
 
-  const fnEl = document.getElementById('folder-name');
-  fnEl.style.display = 'block';
-  fnEl.textContent = `📂 ${dirHandle.name}  (${fileHandles.length} ファイル)`;
-
+  document.getElementById('folder-name').style.display = 'block';
+  document.getElementById('folder-name').textContent = `📂 ${dirHandle.name}  (${fileHandles.length} ファイル)`;
   document.getElementById('btn-preview').disabled = false;
   buildPreview();
 }
 
-// モード切替
 function setMode(mode) {
   currentMode = mode;
   document.querySelectorAll('.mode-tab').forEach((t, i) => {
@@ -542,7 +627,15 @@ function setMode(mode) {
   if (fileHandles.length) buildPreview();
 }
 
-// パターン書式展開
+function setView(view) {
+  currentView = view;
+  document.querySelectorAll('.view-tab').forEach((t, i) => {
+    t.classList.toggle('active', ['stem','ext','flat'][i] === view);
+  });
+  if (fileHandles.length) renderPreview();
+}
+
+// ===== ファイル名生成 =====
 function applyPattern(pattern, stem, ext, n) {
   return pattern
     .replace(/\{stem\}/g, stem)
@@ -552,30 +645,25 @@ function applyPattern(pattern, stem, ext, n) {
     .replace(/\{n\}/g, String(n));
 }
 
-function buildNewName(item, index) {
-  const name = item.name;
-  const dotIdx = name.lastIndexOf('.');
-  const stem = dotIdx > 0 ? name.slice(0, dotIdx) : name;
-  const ext  = dotIdx > 0 ? name.slice(dotIdx) : '';
-
+function buildNewNameCore(stem, ext, seqIdx) {
   if (currentMode === 'pattern') {
     const pattern = document.getElementById('pattern-input').value;
-    if (!pattern) return name;
+    if (!pattern) return stem + ext;
     const start = parseInt(document.getElementById('pattern-start').value) || 1;
-    return applyPattern(pattern, stem, ext, start + index);
+    return applyPattern(pattern, stem, ext, start + seqIdx);
   }
 
   if (currentMode === 'replace') {
     let newStem = stem;
-    const from  = document.getElementById('replace-from').value;
-    const to    = document.getElementById('replace-to').value;
+    const from = document.getElementById('replace-from').value;
+    const to   = document.getElementById('replace-to').value;
     const regex = document.getElementById('replace-regex').checked;
     const caseSens = document.getElementById('replace-case').checked;
-    const pre   = document.getElementById('replace-prefix').value;
-    const suf   = document.getElementById('replace-suffix').value;
+    const pre  = document.getElementById('replace-prefix').value;
+    const suf  = document.getElementById('replace-suffix').value;
     if (from) {
       try {
-        const flags = regex ? (caseSens ? 'g' : 'gi') : (caseSens ? 'g' : 'gi');
+        const flags = caseSens ? 'g' : 'gi';
         const re = regex ? new RegExp(from, flags) : new RegExp(from.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), flags);
         newStem = newStem.replace(re, to);
       } catch { return '⚠️ 正規表現エラー'; }
@@ -591,60 +679,152 @@ function buildNewName(item, index) {
   const pre    = document.getElementById('seq-prefix').value;
   const suf    = document.getElementById('seq-suffix').value;
   const newExt = document.getElementById('seq-newext').value.trim() || ext;
-  const num    = String(start + index).padStart(pad, '0');
+  const num    = String(start + seqIdx).padStart(pad, '0');
 
   let newStem;
-  if (pos === 'prefix')  newStem = pre + num + sep + stem + suf;
-  else if (pos === 'replace') newStem = pre + num + suf;
-  else                   newStem = pre + stem + sep + num + suf;
+  if (pos === 'prefix')        newStem = pre + num + sep + stem + suf;
+  else if (pos === 'replace')  newStem = pre + num + suf;
+  else                         newStem = pre + stem + sep + num + suf;
 
   return newStem + (newExt.startsWith('.') ? newExt : (newExt ? '.' + newExt : ''));
 }
 
+// ===== プラン生成 =====
+function buildPlan() {
+  const pairMode = document.getElementById('pair-mode').checked;
+
+  // ステムでグループ化
+  const stemMap = new Map();
+  fileHandles.forEach(f => {
+    const dotIdx = f.name.lastIndexOf('.');
+    const stem = dotIdx > 0 ? f.name.slice(0, dotIdx) : f.name;
+    const ext  = dotIdx > 0 ? f.name.slice(dotIdx) : '';
+    if (!stemMap.has(stem)) stemMap.set(stem, []);
+    stemMap.get(stem).push({ handle: f.handle, name: f.name, stem, ext });
+  });
+
+  const plan = [];
+  let seqIdx = 0;
+
+  // ステム順にソート済みのため stemMap のキー順 = ファイル名順
+  for (const [stem, files] of stemMap) {
+    // 各ステムグループ内は拡張子順
+    files.sort((a, b) => a.ext.localeCompare(b.ext));
+    const paired = files.length > 1;
+
+    files.forEach((f, fi) => {
+      // pairMode ON: 同ステムは同じ seqIdx / OFF: ファイルごとにインクリメント
+      const idx = pairMode ? seqIdx : (seqIdx + fi);
+      plan.push({
+        handle: f.handle,
+        oldName: f.name,
+        newName: buildNewNameCore(f.stem, f.ext, idx),
+        stem: f.stem,
+        ext: f.ext,
+        paired,
+      });
+    });
+
+    seqIdx += pairMode ? 1 : files.length;
+  }
+
+  return plan;
+}
+
+// ===== プレビュー表示 =====
 function buildPreview() {
   if (!fileHandles.length) return;
-  currentPlan = fileHandles.map((item, i) => ({
-    handle: item.handle,
-    oldName: item.name,
-    newName: buildNewName(item, i),
-  }));
+  currentPlan = buildPlan();
+  renderPreview();
+}
 
+function renderPreview() {
   // 衝突チェック
   const seen = {};
   currentPlan.forEach(p => {
-    if (p.newName !== p.oldName) {
-      seen[p.newName] = (seen[p.newName] || 0) + 1;
-    }
+    if (p.newName !== p.oldName) seen[p.newName] = (seen[p.newName] || 0) + 1;
   });
 
   let changed = 0, conflicts = 0;
-  const rows = currentPlan.map((p, i) => {
-    const isChanged = p.oldName !== p.newName;
-    const isConflict = isChanged && seen[p.newName] > 1;
-    if (isChanged) changed++;
-    if (isConflict) conflicts++;
-    return `<div class="file-row ${isChanged ? 'changed' : ''} ${isConflict ? 'conflict' : ''}">
-      <span class="num">${i + 1}</span>
-      <span class="old" title="${esc(p.oldName)}">${esc(p.oldName)}</span>
-      <span class="arrow">${isChanged ? '→' : '='}</span>
-      <span class="new" title="${esc(p.newName)}">${esc(p.newName)}</span>
-    </div>`;
-  }).join('');
+  currentPlan.forEach(p => {
+    if (p.oldName !== p.newName) changed++;
+    if (p.oldName !== p.newName && seen[p.newName] > 1) conflicts++;
+  });
 
-  document.getElementById('preview-content').innerHTML =
-    `<div class="preview-list">${rows}</div>`;
   document.getElementById('stat-total').textContent = currentPlan.length;
   document.getElementById('stat-changed').textContent = changed;
   document.getElementById('stat-conflict').textContent = conflicts;
   document.getElementById('btn-exec').disabled = changed === 0 || conflicts > 0;
 
+  let html = '<div class="preview-list">';
+
+  if (currentView === 'stem') {
+    // ステムグループ表示
+    const stemMap = new Map();
+    currentPlan.forEach(p => {
+      if (!stemMap.has(p.stem)) stemMap.set(p.stem, []);
+      stemMap.get(p.stem).push(p);
+    });
+    let rowNum = 1;
+    for (const [, files] of stemMap) {
+      const isPaired = files.length > 1;
+      if (isPaired) {
+        html += `<div class="stem-group">`;
+        files.forEach(p => { html += fileRowHtml(p, rowNum++, seen); });
+        html += `</div>`;
+      } else {
+        html += fileRowHtml(files[0], rowNum++, seen);
+      }
+    }
+  } else if (currentView === 'ext') {
+    // 拡張子グループ表示
+    const extMap = new Map();
+    currentPlan.forEach(p => {
+      const key = p.ext.toLowerCase() || '(拡張子なし)';
+      if (!extMap.has(key)) extMap.set(key, []);
+      extMap.get(key).push(p);
+    });
+    const sortedExts = [...extMap.keys()].sort();
+    let rowNum = 1;
+    for (const ext of sortedExts) {
+      const files = extMap.get(ext);
+      const color = extColor(ext);
+      html += `<div class="ext-group-header">
+        <span style="color:${color};font-size:12px">${esc(ext.toUpperCase())}</span>
+        <span class="line"></span>
+        <span style="font-size:11px">${files.length} 件</span>
+      </div>`;
+      files.forEach(p => { html += fileRowHtml(p, rowNum++, seen); });
+    }
+  } else {
+    // フラット表示
+    currentPlan.forEach((p, i) => { html += fileRowHtml(p, i + 1, seen); });
+  }
+
+  html += '</div>';
+  document.getElementById('preview-content').innerHTML = html;
   hideResult();
 }
 
-function esc(s) {
-  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+function fileRowHtml(p, num, seen) {
+  const isChanged  = p.oldName !== p.newName;
+  const isConflict = isChanged && (seen[p.newName] || 0) > 1;
+  const color = extColor(p.ext);
+  const extLabel = (p.ext || '?').replace('.','').toUpperCase().slice(0,5);
+  return `<div class="file-row ${isChanged ? 'changed' : ''} ${isConflict ? 'conflict' : ''}">
+    <span class="num">${num}</span>
+    <span class="ext-badge" style="background:${color}22;color:${color}">${esc(extLabel)}</span>
+    <span class="old" title="${esc(p.oldName)}">${esc(p.oldName)}</span>
+    <span class="arrow">${isChanged ? '→' : '='}</span>
+    <span class="new" title="${esc(p.newName)}">${esc(p.newName)}</span>
+  </div>`;
 }
 
+function esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+
+// ===== リネーム実行 =====
 async function executeRename() {
   const toRename = currentPlan.filter(p => p.oldName !== p.newName);
   if (!toRename.length) return;
@@ -653,8 +833,6 @@ async function executeRename() {
   if (!ok) return;
 
   let done = 0, failed = 0;
-  // ファイルをリネームするには move が必要 — FileSystemFileHandle に直接 rename はないため
-  // ディレクトリハンドルの move() API を使う
   for (const p of toRename) {
     try {
       await p.handle.move(dirHandle, p.newName);
@@ -665,7 +843,7 @@ async function executeRename() {
     }
   }
 
-  const bar = document.getElementById('result-bar');
+  const bar  = document.getElementById('result-bar');
   const icon = document.getElementById('result-icon');
   const msg  = document.getElementById('result-msg');
   bar.className = 'result-bar show ' + (failed ? 'error' : 'success');
@@ -674,7 +852,6 @@ async function executeRename() {
     ? `${done} 件完了、${failed} 件失敗しました`
     : `${done} 件のリネームが完了しました！`;
 
-  // ファイル一覧を再読み込み
   await loadFiles();
 }
 
@@ -682,9 +859,8 @@ function hideResult() {
   document.getElementById('result-bar').className = 'result-bar';
 }
 
-// 設定変更時に自動プレビュー
 document.querySelectorAll('input, select').forEach(el => {
-  el.addEventListener('input', () => { if (fileHandles.length) buildPreview(); });
+  el.addEventListener('input',  () => { if (fileHandles.length) buildPreview(); });
   el.addEventListener('change', () => { if (fileHandles.length) buildPreview(); });
 });
 </script>

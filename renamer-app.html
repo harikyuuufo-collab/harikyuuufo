@@ -885,6 +885,11 @@ async function enterFolder(oldName, subHandle) {
   await loadFiles();
 }
 
+async function goUp() {
+  if (navStack.length <= 1) return;
+  await navigateTo(navStack.length - 2);
+}
+
 async function navigateTo(stackIdx) {
   if (stackIdx >= navStack.length - 1) return; // 現在地なら何もしない
   navStack = navStack.slice(0, stackIdx + 1);
@@ -897,13 +902,12 @@ async function navigateTo(stackIdx) {
 
 function updateBreadcrumb() {
   const bc = document.getElementById('breadcrumb');
-  if (navStack.length <= 1) {
-    bc.className = 'breadcrumb';
-    bc.innerHTML = '';
-    return;
-  }
+  // 常に表示（ルートでも「ルート」として表示）
   bc.className = 'breadcrumb show';
-  bc.innerHTML = navStack.map((item, i) => {
+  const upBtn = navStack.length > 1
+    ? `<button onclick="goUp()" style="background:transparent;border:1px solid var(--border);color:var(--muted);border-radius:5px;padding:2px 9px;font-size:12px;cursor:pointer;margin-right:6px;transition:all .15s" onmouseover="this.style.borderColor='var(--accent)';this.style.color='var(--accent)'" onmouseout="this.style.borderColor='var(--border)';this.style.color='var(--muted)'">← 上へ</button>`
+    : '';
+  const crumbs = navStack.map((item, i) => {
     const isCurrent = i === navStack.length - 1;
     const sep = i > 0 ? '<span class="bc-sep"> / </span>' : '';
     if (isCurrent) {
@@ -911,6 +915,7 @@ function updateBreadcrumb() {
     }
     return `${sep}<span class="bc-item" onclick="navigateTo(${i})">📁 ${esc(item.name)}</span>`;
   }).join('');
+  bc.innerHTML = upBtn + crumbs;
 }
 
 function setView(view) {

@@ -1202,14 +1202,33 @@ async function executeRename() {
   const toRename = currentPlan.filter(p => p.oldName !== p.newName && selectedSet.has(p.oldName));
   if (!toRename.length) return;
 
-  const ok = confirm(`選択した ${toRename.length} 件のファイルをリネームします。よろしいですか？`);
-  if (!ok) return;
-
   const bar  = document.getElementById('result-bar');
   const icon = document.getElementById('result-icon');
   const msg  = document.getElementById('result-msg');
 
+  // ── 書き込み権限を確認・要求 ──
   bar.className = 'result-bar show';
+  icon.textContent = '🔑';
+  msg.textContent = '書き込み権限を確認中...';
+
+  try {
+    let perm = await dirHandle.queryPermission({ mode: 'readwrite' });
+    if (perm !== 'granted') {
+      perm = await dirHandle.requestPermission({ mode: 'readwrite' });
+    }
+    if (perm !== 'granted') {
+      icon.textContent = '🚫';
+      msg.textContent = 'フォルダへの書き込み権限がありません。フォルダを選び直してください。';
+      return;
+    }
+  } catch (e) {
+    // queryPermission が未対応のブラウザはそのまま続行
+    console.warn('queryPermission not supported, proceeding anyway', e);
+  }
+
+  const ok = confirm(`選択した ${toRename.length} 件のファイルをリネームします。よろしいですか？`);
+  if (!ok) { hideResult(); return; }
+
   icon.textContent = '⏳';
   msg.textContent = `リネーム中... 0 / ${toRename.length}`;
 
@@ -1218,15 +1237,18 @@ async function executeRename() {
 
   for (const p of toRename) {
     try {
-      // まず move() を試みる（Chrome 116+）
-      if (typeof p.handle.move === 'function') {
-        await p.handle.move(dirHandle, p.newName);
+      // dirHandle から最新のハンドルを取得して rename
+      const freshHandle = await dirHandle.getFileHandle(p.oldName);
+
+      if (typeof freshHandle.move === 'function') {
+        // move() 対応ブラウザ（Chrome 116+）
+        await freshHandle.move(dirHandle, p.newName);
       } else {
-        // フォールバック: 内容コピー → 新ファイル作成 → 旧ファイル削除
-        const file = await p.handle.getFile();
-        const buf  = await file.arrayBuffer();
-        const newHandle = await dirHandle.getFileHandle(p.newName, { create: true });
-        const writable  = await newHandle.createWritable();
+        // フォールバック: コピー → 新規作成 → 旧削除
+        const file    = await freshHandle.getFile();
+        const buf     = await file.arrayBuffer();
+        const newHdl  = await dirHandle.getFileHandle(p.newName, { create: true });
+        const writable = await newHdl.createWritable();
         await writable.write(buf);
         await writable.close();
         await dirHandle.removeEntry(p.oldName);
@@ -1234,7 +1256,7 @@ async function executeRename() {
       done++;
     } catch (e) {
       console.error(`rename failed: ${p.oldName} → ${p.newName}`, e);
-      errors.push(`${p.oldName}: ${e.message || e}`);
+      errors.push(`${p.oldName} → ${p.newName}: ${e.message || e}`);
       failed++;
     }
     msg.textContent = `リネーム中... ${done + failed} / ${toRename.length}`;
@@ -1243,7 +1265,9 @@ async function executeRename() {
   bar.className = 'result-bar show ' + (failed ? 'error' : 'success');
   icon.textContent = failed ? '❌' : '✅';
   if (failed) {
-    msg.textContent = `${done} 件完了、${failed} 件失敗: ${errors.slice(0,2).join(' / ')}${errors.length > 2 ? ' …' : ''}`;
+    const detail = errors.slice(0, 2).join(' | ') + (errors.length > 2 ? ` 他${errors.length-2}件` : '');
+    msg.textContent = `${done} 件完了、${failed} 件失敗 — ${detail}`;
+    console.table(errors);
   } else {
     msg.textContent = `${done} 件のリネームが完了しました！`;
   }
